@@ -108,3 +108,15 @@ update user_info set username = {1} where id = {0};
 #define update_username_3
 update user_info set username = {1} where /*begin{0}*/id = {0}/*end*/;
 #end
+
+/*
+	@bref 更新用户名4
+	@is_brace true
+	@in_isarr false
+	@out_isarr false
+	@in id[cond]: string
+	@in username: string
+*/
+#define update_username_4
+update user_info set username = {1} {0};
+#end

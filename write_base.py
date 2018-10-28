@@ -173,7 +173,7 @@ class CWriteBase(object):
 		content += "}\n"
 		return content
 
-	def __write_execute(self, func_name, method_info):
+	def __write_execute2(self, func_name, method_info):
 		content = ""
 		in_isarr = method_info.get(CSqlParse.IN_ISARR)
 		if in_isarr is None:
@@ -229,6 +229,67 @@ class CWriteBase(object):
 		else:
 			callback_name = func_name + "Callback"
 			content += "\t"*1 + 'ret = sqlite3_exec(m_db, sql.c_str(), {0}, &output, nullptr);\n'.format(callback_name)
+		content += "\t"*1 + 'm_mutex.unlock();\n'
+		if in_isarr == "true":
+			content += "\t"*1 + "if (ret != SQLITE_OK) return ret;\n"
+		return content
+
+	def __write_execute(self, func_name, method_info):
+		content = ""
+		in_isarr = method_info.get(CSqlParse.IN_ISARR)
+		if in_isarr is None:
+			raise SystemExit("[Keyword Error] (function {0}) in_isarr is exist".format(func_name))
+		input_params = method_info.get(CSqlParse.INPUT_PARAMS)
+		output_params = method_info.get(CSqlParse.OUTPUT_PARAMS)
+		buf_len = method_info.get(CSqlParse.BUFLEN)
+		if buf_len is None:
+			buf_len = "512"
+		is_brace = method_info.get(CSqlParse.IS_BRACE)
+		if is_brace is None:
+			is_brace = False
+		is_group = method_info.get(CSqlParse.IS_GROUP)
+		sql = method_info.get(CSqlParse.SQL)
+		if sql is None:
+			sql = ""
+		sql = re.sub(r"\n", "\n\t\t", sql)
+		n = 1
+		if in_isarr == "true":
+			n = 2
+		content += "\t"*1 + 'm_mutex.lock();\n'
+		if input_params is not None:
+			content += "\t"*1 + 'sqlite3_exec(m_db, "begin transaction;", nullptr, nullptr, nullptr);\n'
+			content += "\t"*1 + 'std::string sql("");\n'
+			if in_isarr == "true":
+				content += "\t"*1 + "for (auto iter = input.begin(); iter != input.end(); ++iter)\n"
+				content += "\t"*1 + "{\n"
+			content += "\t"*n + "char buf[{0}];\n".format(buf_len)
+			content += "\t"*n + "memset(buf, 0, sizeof(buf));\n"
+			if is_group is None or is_group is False:
+				if is_brace is False:
+					content += "\t"*n + 'snprintf(buf, sizeof(buf), "{0}"\n'.format(self.__replace_sql_by_input_params(input_params, sql, False))
+					content += "\t"*(n+1) + ", "
+					content += self.__get_input_posture(in_isarr, input_params)
+					content += ");\n"
+				else:
+					sql, fulls = self.__replace_sql_brace(input_params, sql, False)
+					content += "\t"*n + 'snprintf(buf, sizeof(buf), "{0}"\n'.format(sql)
+					content += "\t"*(n+1) + ", "
+					content += self.__get_input_brace_posture(in_isarr, input_params, fulls)
+					content += ");\n"
+			else:
+				content += self.__write_group(func_name, method_info, in_isarr, is_brace, input_params, sql, n)
+			content += "\t"*n + 'sql = buf;\n'
+		else:
+			content += "\t"*1 + 'std::string sql = "{0}";\n'.format(sql)
+		if output_params is None:
+			content += "\t"*n + 'ret = sqlite3_exec(m_db, sql.c_str(), nullptr, nullptr, nullptr);\n'
+		else:
+			callback_name = func_name + "Callback"
+			content += "\t"*n + 'ret = sqlite3_exec(m_db, sql.c_str(), {0}, &output, nullptr);\n'.format(callback_name)
+		if in_isarr == "true":
+			content += "\t"*1 + "}\n"
+		if input_params is not None:
+			content += "\t"*1 + 'sqlite3_exec(m_db, "commit;", nullptr, nullptr, nullptr);\n'
 		content += "\t"*1 + 'm_mutex.unlock();\n'
 		if in_isarr == "true":
 			content += "\t"*1 + "if (ret != SQLITE_OK) return ret;\n"
@@ -366,8 +427,15 @@ class CWriteBase(object):
 				str_tmp = "[Param Match Error] may be last #define error ? input param length == {1}, max index == {2}\n[sql] : \t{0}".format(sql, param_len, max_number)
 				raise SystemExit(str_tmp)
 		for number, keyword in list(full_set):
-			param_type = input_params[number].get(CSqlParse.PARAM_TYPE)
-			sql = re.sub(keyword, '\\"' + self.type2symbol(param_type) + '\\"', sql)
+			inpams = input_params[number]
+			tmp = ""
+			param_type = inpams.get(CSqlParse.PARAM_TYPE)
+			if inpams.get(CSqlParse.PARAM_IS_CONDITION) is False:
+				tmp += '\\"'
+			tmp += self.type2symbol(param_type)
+			if inpams.get(CSqlParse.PARAM_IS_CONDITION) is False:
+				tmp += '\\"'
+			sql = re.sub(keyword, tmp, sql)
 		return sql, fulls
 
 	def __replace_sql_by_input_params(self, input_params, sql, is_group):
@@ -381,9 +449,14 @@ class CWriteBase(object):
 		i = 0
 		for ch in sql:
 			if ch == "?":
-				param_type = input_params[i].get(CSqlParse.PARAM_TYPE)
+				inpams = input_params[i]
+				param_type = inpams.get(CSqlParse.PARAM_TYPE)
 				symbol = self.type2symbol(param_type)
-				content += '\\"' + symbol + '\\"'
+				if inpams.get(CSqlParse.PARAM_IS_CONDITION) is False:
+					content += '\\"'
+				content += symbol
+				if inpams.get(CSqlParse.PARAM_IS_CONDITION) is False:
+					content += '\\"'
 				i += 1
 			else:
 				content += ch
